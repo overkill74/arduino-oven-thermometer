@@ -41,7 +41,7 @@ float IvanSensore_DS18B20::readTemperatureC()
   if (!is_good()) startup();
 
   m_sensor.requestTemperatures(); // Send the command to get temperatures
-  delay(10);
+  //delay(10);
   float temp = m_sensor.getTempC(m_add);
   if (temp < -125.0f) {
     m_error++;

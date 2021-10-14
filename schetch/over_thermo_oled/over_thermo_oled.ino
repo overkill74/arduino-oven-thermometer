@@ -1,57 +1,39 @@
 #include <SPI.h>
+#include <Wire.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_PCD8544.h>
+#include <Adafruit_SSD1306.h>
 #include <max6675.h>
 #include <EEPROM.h>
 #include <ezButton.h>
 
 //----------------------------------------------------------------------
-#include <DallasTemperature.h>
-#include <OneWire.h>
-#include "IvanSensore_DS18B20.h"
 #include "temp_ctrl.h"
 
 //-----------------------------------------------------------------------
-// Confiugratore dello sketch
-// define to enable SD log
-//#define APP_LOG_ON_SD
-
-// true or false to enable temp simulators
-#define APP_SIMULATORE false
-
-// define to enable modbus, undef output on Serial
-#define APP_MODBUS
-
-// define pseudo frequency of main loop
-#define APP_FRQ_HZ   50
-//-----------------------------------------------------------------------
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
 
 //-----------------------------------------------------------------------
 // PIN ASSIGNMENT
 //-----------------------------------------------------------------------
-// One Wire
-#define ONE_WIRE_BUS_MANDATA    8
-#define ONE_WIRE_PIN_VCC        9
-#define ONE_WIRE_PIN_GND        10
-
 // Thermocouple
-#define TC_CLK                  11
-#define TC_CS                   12
-#define TC_SDO                  13
+#define TC_CLK                   5
+#define TC_CS                    6
+#define TC_SDO                   7
+
+// LCD
+#define OLED_CS                  8
+#define OLED_DC                  9
+#define OLED_RESET              10
+#define OLED_MOSI               11
+#define OLED_CLK                12
+#define OLED_VCC                13
 
 // NTC
 #define NTC                     A5
 
 // SSR Output
 #define SSR_OUTPUT              A4
-
-// LCD
-#define LCD_CLK                 7
-#define LCD_DIN                 6
-#define LCD_DC                  5
-#define LCD_CS                  4
-#define LCD_RST                 3
-#define BKL_PIN                 2
 
 // KEY
 #define KEY_PLUS                A0
@@ -60,7 +42,7 @@
 #define ONE_WIRE_RESOLUTION     12
 
 //-----------------------------------------------------------------------
-static IvanSensore_DS18B20 m_sens_temp(ONE_WIRE_BUS_MANDATA, ONE_WIRE_RESOLUTION, APP_SIMULATORE);
+//static IvanSensore_DS18B20 m_sens_temp(ONE_WIRE_BUS_MANDATA, ONE_WIRE_RESOLUTION, false);
 static MAX6675 m_thermocouple(TC_CLK, TC_CS, TC_SDO);
 // Software SPI (slower updates, more flexible pin options):
 // pin 7 - Serial clock out (SCLK)
@@ -68,18 +50,19 @@ static MAX6675 m_thermocouple(TC_CLK, TC_CS, TC_SDO);
 // pin 5 - Data/Command select (D/C)
 // pin 4 - LCD chip select (CS)
 // pin 3 - LCD reset (RST)
-Adafruit_PCD8544 display = Adafruit_PCD8544(LCD_CLK, LCD_DIN, LCD_DC, LCD_CS, LCD_RST);
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, OLED_MOSI, OLED_CLK, OLED_DC, OLED_RESET, OLED_CS);
 
 // Buttons
-static ezButton   m_key_plus(KEY_PLUS);
-static ezButton   m_key_minus(KEY_MINUS);
+//static ezButton   m_key_plus(KEY_PLUS);
+//static ezButton   m_key_minus(KEY_MINUS);
 
 static TempCtrl m_temp_ctrl(SSR_OUTPUT);
 
 uint32_t m_rst_time = 0;  //! Reference time
 
 //-----------------------------------------------------------------------
-static void stampa_tempo(int linea, bool do_blink)
+static void stampa_tempo(bool do_blink)
 {
   unsigned long runMillis = millis() - m_rst_time;
   unsigned long allSeconds = runMillis / 1000;
@@ -89,63 +72,70 @@ static void stampa_tempo(int linea, bool do_blink)
   int runSeconds = secsRemaining % 60;
   static int cnt = 0;
 
+  int linea = 0;
+
   //  char buf2[32];
   //  sprintf(buf2, "%d:%02d:%02d", runHours, runMinutes, runSeconds);
   //  Serial.println(buf2);
   ++cnt;
   bool is_blank = (do_blink && (cnt & 1));
 
-
+  int x = 8;
   display.setTextSize(2);
-  display.setCursor(0, linea);
+  display.setCursor(8, linea);
   if (is_blank) {
     display.print(" ");
   }
   else {
     display.print(runHours);
   }
-  display.setCursor(8, linea);
+  display.setCursor(x + 8, linea);
   if (cnt & 2) {
     display.print(is_blank ? " " : ":");
   }
   else {
     display.print(" ");
   }
-  display.setCursor(16, linea);
+  display.setCursor(x + 16, linea);
   char buf[16];
   sprintf(buf, "%02d", runMinutes);
   display.print(is_blank ? " " : buf);
 
-  display.drawFastVLine(42, 28, 20, 0xFFFF);
+  display.drawFastVLine(58, 0, 16, SSD1306_WHITE);
 }
 
 //-----------------------------------------------------------------------
-static void stampa_temperatura(float celsius, int line, bool is_tc, bool is_ntc)
+static void stampa_temperatura(float celsius, bool is_tc, bool is_ntc)
 {
   static bool is_high = false;
   bool is_error = false;
   int x = 0;
 
+  //celsius = -51.5;
+
   if (celsius > 999.0 || celsius < -99.0) {
     is_error = true;
+    is_high = false;
   }
-
-  if (celsius >= 0.0) {
-    // Histeresys positive value
-    if (is_high && celsius < 90.0) {
-      is_high = false;
+  else
+  {
+    if (celsius >= 0.0) {
+      // Histeresys positive value
+      if (is_high && celsius < 90.0) {
+        is_high = false;
+      }
+      if (!is_high && celsius >= 100.0) {
+        is_high = true;
+      }
     }
-    if (!is_high && celsius >= 100.0) {
-      is_high = true;
-    }
-  }
-  else {
-    // Histeresys negative value
-    if (is_high && celsius >= -9.0) {
-      is_high = false;
-    }
-    if (!is_high && celsius <= -10.0) {
-      is_high = true;
+    else {
+      // Histeresys negative value
+      if (is_high && celsius >= -9.0) {
+        is_high = false;
+      }
+      if (!is_high && celsius <= -10.0) {
+        is_high = true;
+      }
     }
   }
 
@@ -153,33 +143,19 @@ static void stampa_temperatura(float celsius, int line, bool is_tc, bool is_ntc)
   if (is_error) {
     // Errore
     tmp = "Err!";
-    x = 4;
+    x = 0;
   }
   else {
-    if (is_high) {
-      // 100
-      int c = (int)celsius;
-      tmp = String(c);
-      if (c < 100) {
-        x = 36;
-      }
-      else {
-        x = 18;
-      }
-    }
-    else {
-      // 25.1
-      tmp = String(celsius, 1);
-      if (celsius >= 0.0 && celsius <= 9.99) {
-        x = 18;
-      }
-    }
+    tmp = String(celsius, is_high ? 0 : 1);
+    int tlen = tmp.length();
+    x = 30 * (4 - tlen);
   }
-  //Serial.println(tmp);
 
   // text display tests
-  display.setTextColor(BLACK);
-  display.setTextSize(3);
+  int line = 24;
+
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(5);
 
   // Draw temperature
   display.setCursor(x, line);
@@ -187,7 +163,7 @@ static void stampa_temperatura(float celsius, int line, bool is_tc, bool is_ntc)
 
   // Draw symbol
   if (!is_error) {
-    display.setCursor(72, line);
+    display.setCursor(116, line);
     display.setTextSize(2);
     display.println("C");
   }
@@ -195,7 +171,7 @@ static void stampa_temperatura(float celsius, int line, bool is_tc, bool is_ntc)
   // TC symbol
   if (is_ntc) {
     display.setTextSize(1);
-    display.setCursor(72, line + 16);
+    display.setCursor(116, line + 28);
     display.println("Nt");
   }
   else if (is_tc) {
@@ -204,15 +180,15 @@ static void stampa_temperatura(float celsius, int line, bool is_tc, bool is_ntc)
     display.println("TC");
   }
 
-  display.drawFastHLine(0, line + 24, 86, 0xFFFF);
+  display.drawFastHLine(0, 17, display.width() - 1, SSD1306_WHITE);
 }
 //-----------------------------------------------------------------------
-static void stampa_setpoint(float sp, int linea, bool do_blink)
+static void stampa_setpoint(float sp, bool do_blink)
 {
-  //static uint32_t old = 0;
-
   static bool old_blink = false;
   static int cnt = 0;
+  int linea = 0;
+  int x = 64;
 
   if (do_blink) {
     if (!old_blink) {
@@ -222,37 +198,25 @@ static void stampa_setpoint(float sp, int linea, bool do_blink)
   }
   old_blink = do_blink;
 
-  char buf2[16];
+  String tmp;
   int isp = (int)sp;
-  if (do_blink) {
-    if (cnt & 1) {
-      if (sp >= 100) {
-        sprintf(buf2, "%d", (int)sp);
-      }
-      else {
-        sprintf(buf2, "% 3d", (int)sp);
-      }
-    }
-    else {
-      sprintf(buf2, "   ");
-    }
+  if (do_blink && !(cnt & 1)) {
+    tmp = "    ";
   }
   else {
-    if (sp >= 100) {
-      sprintf(buf2, "%d", (int)sp);
-    }
-    else {
-      sprintf(buf2, "% 3d", (int)sp);
-    }
+    tmp = String(sp, 0);
   }
 
+  const int chrsz = 2;
+  const int chr_w = 6;
+  int txtw = tmp.length();
+  Serial.print("txtw : "); Serial.println(txtw);
+  int blank = display.width() - x - txtw * chr_w * chrsz;
+  Serial.print("blank: "); Serial.println(blank);
   display.setTextSize(2);
-  display.setCursor(48, linea);
-  display.print(buf2);
-
-  //Serial.println(millis() - old);
-  //old = millis();
-}
+  display.setCursor(x + blank / 2, linea);
+  display.print(tmp);
+ }
 
 //-----------------------------------------------------------------------
 static float read_tc()
@@ -321,35 +285,35 @@ void setup()
 {
   Serial.begin(115200);
 
+  // Power up Display
+  pinMode(OLED_VCC, OUTPUT);
+  digitalWrite(OLED_VCC, HIGH);
+
+  Serial.println("Init LCD");
+
+  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
+  if (!display.begin(SSD1306_SWITCHCAPVCC)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for (;;); // Don't proceed, loop forever
+  }
+
+  // Show initial display buffer contents on the screen --
+  // the library initializes this with an Adafruit splash screen.
+  display.display();
+  delay(500); // Pause for 2 seconds
+
+  // Clear the buffer
+  display.clearDisplay();
+
   Serial.println("Init Temperature");
-  pinMode(ONE_WIRE_PIN_VCC, OUTPUT);
-  pinMode(ONE_WIRE_PIN_GND, OUTPUT);
-  digitalWrite(ONE_WIRE_PIN_VCC, HIGH);
-  digitalWrite(ONE_WIRE_PIN_GND, LOW);
 
   pinMode(SSR_OUTPUT, OUTPUT);
   digitalWrite(SSR_OUTPUT, LOW);
-
-  pinMode(BKL_PIN, OUTPUT);
-  digitalWrite(BKL_PIN, HIGH);
 
   Serial.println("Init Display");
   display.begin();
 
   // init done
-
-  // you can change the contrast around to adapt the display
-  // for the best viewing!
-  display.setContrast(45);
-
-  // Backlight
-  digitalWrite(BKL_PIN, LOW);
-
-  // Init sensor
-  for (int x = 0; x < 10; ++x) {
-    m_sens_temp.readTemperatureC();
-  }
-
   // Read Setpoint from EEPROM
   float sp = 0.0f;
 
@@ -416,6 +380,13 @@ void loop()
       // Set temperature
       float temp = is_ntc ? temp_ntc : (is_tc ? temp_tc : temperatura);
 
+      // Keyboard
+      bool not_modified = true;
+      float sp = m_temp_ctrl.getSetpoint();
+      bool set_temp = (millis() < tout_blink);
+      bool wait_rst_time = (millis() < tout_rst_time);
+
+#ifdef m_key_plus
       // Test Keys
       if (m_key_plus.getState() && m_key_minus.getState())
       {
@@ -434,8 +405,6 @@ void loop()
         tout_rst_time_sample = 0;
       }
 
-      bool set_temp = (millis() < tout_blink);
-      bool wait_rst_time = (millis() < tout_rst_time);
       if (wait_rst_time) {
         if (m_key_plus.getState() || m_key_minus.getState()) {
           tout_rst_time = millis() + delay_rst_time;
@@ -443,7 +412,6 @@ void loop()
         set_temp = false;
       }
 
-      bool not_modified = true;
       if (set_temp)
       {
         // Increment
@@ -454,7 +422,6 @@ void loop()
             time_sample_inc = millis() + delay_fast_inc_dec;
           }
           time_sample_dec = 0;
-          float sp = m_temp_ctrl.getSetpoint();
           if ((millis() > time_sample_inc)) {
             sp = sp + fmod(sp, fast_inc_dec_step);
             sp += fast_inc_dec_step;
@@ -492,13 +459,14 @@ void loop()
           time_sample_dec = 0;
         }
       }
+#endif
 
       // Clear display
       display.clearDisplay();
 
-      stampa_temperatura(temp, 4, is_tc, is_ntc);
-      stampa_tempo(32, wait_rst_time & ~time_just_reset);
-      stampa_setpoint(m_temp_ctrl.getSetpoint() + 0.5f, 32, set_temp & not_modified);
+      stampa_temperatura(temp, is_tc, is_ntc);
+      stampa_tempo(wait_rst_time & ~time_just_reset);
+      stampa_setpoint(m_temp_ctrl.getSetpoint() + 0.5f, set_temp & not_modified);
 
       // Update display
       display.display();
@@ -526,6 +494,7 @@ void loop()
     }
 
     // Keyboard
+#ifdef m_key_plus
     m_key_plus.loop();
     m_key_minus.loop();
     if (m_key_plus.isPressed() && !m_key_minus.isPressed()) {
@@ -534,6 +503,7 @@ void loop()
     if (!m_key_plus.isPressed() && m_key_minus.isPressed()) {
       tout_blink = millis() + delay_blink;
     }
+#endif
   }
 
 }

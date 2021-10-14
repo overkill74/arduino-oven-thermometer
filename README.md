@@ -18,4 +18,3 @@ For the thermocouple
 ## Possible expansions
 Add a Bluetooth UART interface to allow the setup of the gauge.
 Add a buzzer to alert the possible temperature alarm as to count the time.
-
